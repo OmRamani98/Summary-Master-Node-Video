@@ -10,9 +10,7 @@ const port = process.env.PORT || 8001;
 
 // Enable CORS for requests from the React app
 const cors = require('cors');
-app.use(cors({
-  origin: 'http://localhost:3000' // Replace with your React app's origin
-}));
+app.use(cors());
 
 // Configure multer for handling file uploads
 const storage = multer.diskStorage({
