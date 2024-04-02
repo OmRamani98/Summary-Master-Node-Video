@@ -3,6 +3,7 @@ const multer = require('multer');
 const cors = require('cors');
 const { Storage } = require('@google-cloud/storage');
 const { SpeechClient } = require('@google-cloud/speech').v1p1beta1;
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -69,8 +70,17 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
 
     console.log('Transcription:', transcription); // Log transcription for debugging
 
-    // Respond with the transcription
-    res.status(200).json({ textContent: transcription });
+    // Save the transcription to a file
+    fs.writeFile('transcript.txt', transcription, 'utf8', (err) => {
+      if (err) {
+        console.error('Error saving transcription:', err);
+        res.status(500).json({ error: 'Failed to save transcription' });
+      } else {
+        console.log('Transcription saved successfully');
+        // Respond with the transcription
+        res.status(200).sendFile('transcript.txt', { root: __dirname });
+      }
+    });
   } catch (error) {
     console.error('Error processing video:', error);
     res.status(500).json({ error: 'Failed to process video' });
