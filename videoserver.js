@@ -3,6 +3,7 @@ const multer = require('multer');
 const cors = require('cors');
 const { Storage } = require('@google-cloud/storage');
 const { SpeechClient } = require('@google-cloud/speech').v1;
+const fs = require('fs');
 const ffmpeg = require('fluent-ffmpeg');
 const MemoryStream = require('memorystream');
 
@@ -27,7 +28,7 @@ const speechClient = new SpeechClient({
 // Configure multer for handling file uploads
 const upload = multer();
 
-// Define endpoint for uploading MP4 files
+// Define endpoint for uploading video files
 app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
   try {
     const file = req.file;
@@ -35,10 +36,10 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // Create a readable stream from the uploaded MP4 file buffer
+    // Create a readable stream from the uploaded video file buffer
     const readableStream = new MemoryStream(req.file.buffer);
 
-    // Configure ffmpeg to read from the stream and extract audio
+    // Extract audio from the video file using ffmpeg
     const audioStream = readableStream.pipe(ffmpeg().format('wav').audioCodec('pcm_s16le').outputOptions('-vn'));
 
     // Collect the extracted audio into a buffer
