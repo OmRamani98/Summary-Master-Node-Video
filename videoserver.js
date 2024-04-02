@@ -1,124 +1,74 @@
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs');
-const { SpeechClient } = require('@google-cloud/speech').v1;
-const path = require('path');
-const ffmpeg = require('fluent-ffmpeg');
+const cors = require('cors');
+const { Storage } = require('@google-cloud/storage');
+const { SpeechClient } = require('@google-cloud/speech').v1p1beta1; // Update to v1p1beta1 for enhanced models
 
 const app = express();
-const port = process.env.PORT || 8001;
-
-// Enable CORS for requests from the React app
-const cors = require('cors');
 app.use(cors());
+const port = process.env.PORT || 8000;
+
+// Set up Google Cloud Storage using service account key from environment variable
+const storage = new Storage({
+  projectId: "summary-master-sdp",
+  credentials: JSON.parse(process.env.CLOUD_STORAGE_KEYFILE)
+});
+const bucketName = 'summary-master'; // Replace with your GCS bucket name
+const bucket = storage.bucket(bucketName);
+
+// Set up Google Cloud Speech-to-Text
+const speechClient = new SpeechClient({
+  projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
+  credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
+});
 
 // Configure multer for handling file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    // Generate a dynamic filename with a unique suffix
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  }
-});
-const upload = multer({ storage: storage });
+const upload = multer({ storage: multer.memoryStorage() });
 
-// Function to split audio into 1-second segments
-const splitAudioIntoSegments = async (filePath) => {
-  const audioSegments = [];
-
-  // Read the audio file
-  const audioData = fs.readFileSync(filePath);
-  const audioLength = audioData.length;
-  const segmentSize = 16000 * 2; // Assuming 16-bit audio at 16 kHz (1-second segment)
-
-  // Split the audio into segments
-  for (let i = 0; i < audioLength; i += segmentSize) {
-    const segment = audioData.slice(i, i + segmentSize);
-    audioSegments.push(segment);
-  }
-
-  return audioSegments;
-};
-
-// POST endpoint for handling video file upload and text extraction
-app.post('/upload', upload.single('videoFile'), async (req, res) => {
-  const videoPath = req.file.path;
-  const outputPath = path.join(__dirname, 'uploads', 'output.mp3');
-
-  console.log('Video uploaded:', videoPath);
-
+// Define endpoint for uploading MP4 files
+app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
   try {
-    // Convert video to audio with MP3 encoding
-    await new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
-        .toFormat('mp3')
-        .output(outputPath)
-        .on('end', () => {
-          console.log('Audio conversion completed');
-          resolve();
-        })
-        .on('error', (err) => {
-          console.error('Audio conversion error:', err);
-          reject(err);
-        })
-        .run();
-    });
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
 
-    console.log('Audio file created:', outputPath);
-
-    // Create a Speech-to-Text client
-    const client = new SpeechClient({
-      keyFilename: 'speech-to-text.json' // Replace with your Google Cloud service account key file path
-    });
-
-    // Read the audio file
-    const audioData = fs.readFileSync(outputPath);
-
-    // Define recognition config
-    const config = {
-      sampleRateHertz: 16000,
-      languageCode: 'en-US',
-      encoding: 'MP3',
-      enableAutomaticPunctuation: true
+    // Configure audio settings for speech recognition
+    const audioConfig = {
+      encoding: 'LINEAR16', // For MP4, you typically need to extract audio and convert it to LINEAR16 format
+      sampleRateHertz: 44100, // Adjust as needed
+      languageCode: 'en-US', // Language code
+      enableAutomaticPunctuation: true // Enable automatic punctuation
     };
 
+    // Configure the audio source
     const audio = {
-      content: audioData.toString('base64')
+      content: file.buffer.toString('base64')
     };
 
-    console.log('Starting speech recognition');
-
-    // Perform speech recognition
-    const [response] = await client.recognize({
+    // Set up the speech recognition request
+    const request = {
       audio: audio,
-      config: config
-    });
+      config: audioConfig
+    };
 
+    // Perform the speech recognition
+    const [response] = await speechClient.recognize(request);
+
+    // Process the transcription response
     const transcription = response.results
       .map(result => result.alternatives[0].transcript)
       .join('\n');
 
-    console.log('Transcription:', transcription);
-
-    res.json({ textContent: transcription });
+    // Respond with the transcription
+    res.status(200).json({ textContent: transcription });
   } catch (error) {
-    console.error('Error extracting text:', error);
-    res.status(500).json({ error: 'Failed to extract text' });
-  } finally {
-    // Delete the temporary uploaded files
-    fs.unlinkSync(videoPath);
-    fs.unlinkSync(outputPath);
-    console.log('Temporary files deleted');
+    console.error('Error processing video:', error);
+    res.status(500).json({ error: 'Failed to process video' });
   }
 });
 
+// Start the server
 app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
