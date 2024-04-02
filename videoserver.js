@@ -2,7 +2,9 @@ const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const { Storage } = require('@google-cloud/storage');
-const { SpeechClient } = require('@google-cloud/speech').v1p1beta1; // Update to v1p1beta1 for enhanced models
+const { SpeechClient } = require('@google-cloud/speech').v1;
+const ffmpeg = require('fluent-ffmpeg');
+const MemoryStream = require('memorystream');
 
 const app = express();
 app.use(cors());
@@ -23,7 +25,7 @@ const speechClient = new SpeechClient({
 });
 
 // Configure multer for handling file uploads
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer();
 
 // Define endpoint for uploading MP4 files
 app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
@@ -33,35 +35,47 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // Configure audio settings for speech recognition
-    const audioConfig = {
-      encoding: 'LINEAR16', // For MP4, you typically need to extract audio and convert it to LINEAR16 format
-      sampleRateHertz: 44100, // Adjust as needed
-      languageCode: 'en-US', // Language code
-      enableAutomaticPunctuation: true // Enable automatic punctuation
-    };
+    // Create a readable stream from the uploaded MP4 file buffer
+    const readableStream = new MemoryStream(req.file.buffer);
 
-    // Configure the audio source
-    const audio = {
-      content: file.buffer.toString('base64')
-    };
+    // Configure ffmpeg to read from the stream and extract audio
+    const audioStream = readableStream.pipe(ffmpeg().format('wav').audioCodec('pcm_s16le').outputOptions('-vn'));
 
-    // Set up the speech recognition request
-    const request = {
-      audio: audio,
-      config: audioConfig
-    };
+    // Collect the extracted audio into a buffer
+    const audioChunks = [];
+    audioStream.on('data', chunk => audioChunks.push(chunk));
+    audioStream.on('end', async () => {
+      // Concatenate the audio chunks into a single buffer
+      const audioBuffer = Buffer.concat(audioChunks);
 
-    // Perform the speech recognition
-    const [response] = await speechClient.recognize(request);
+      // Convert the audio buffer to base64 encoding
+      const audioContent = audioBuffer.toString('base64');
 
-    // Process the transcription response
-    const transcription = response.results
-      .map(result => result.alternatives[0].transcript)
-      .join('\n');
+      // Configure audio settings for speech recognition
+      const audioConfig = {
+        encoding: 'LINEAR16', // Adjust as needed
+        sampleRateHertz: 44100, // Adjust as needed
+        languageCode: 'en-US', // Language code
+        enableAutomaticPunctuation: true // Enable automatic punctuation
+      };
 
-    // Respond with the transcription
-    res.status(200).json({ textContent: transcription });
+      // Set up the speech recognition request
+      const request = {
+        audio: { content: audioContent },
+        config: audioConfig
+      };
+
+      // Perform the speech recognition
+      const [response] = await speechClient.recognize(request);
+
+      // Process the transcription response
+      const transcription = response.results
+        .map(result => result.alternatives[0].transcript)
+        .join('\n');
+
+      // Respond with the transcription
+      res.status(200).json({ textContent: transcription });
+    });
   } catch (error) {
     console.error('Error processing video:', error);
     res.status(500).json({ error: 'Failed to process video' });
