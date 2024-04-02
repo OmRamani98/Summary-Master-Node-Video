@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Summary-Master-Node-Audio",
   "main": "app.js",
-  "repository": "https://github.com/OmRamani98/Summary-Master-Node-Audio.git",
+  "repository": "https://github.com/OmRamani98/Summary-Master-Node-Video.git",
   "author": "Om Ramani",
   "license": "MIT",
   "private": false,
@@ -17,7 +17,7 @@
     "cors": "^2.8.5",
     "express": "^4.17.2",
     "fluent-ffmpeg": "^2.1.2",
-    "memorystream": "^0.5.1",
+    "memorystream": "^0.7.0",
     "multer": "^1.4.5-lts.1"
   },
   "engines": {
