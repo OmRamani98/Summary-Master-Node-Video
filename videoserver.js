@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const { Storage } = require('@google-cloud/storage');
-const { SpeechClient } = require('@google-cloud/speech').v1p1beta1; // Note the version change
+const { SpeechClient } = require('@google-cloud/speech').v1p1beta1;
 
 const app = express();
 app.use(cors());
@@ -29,6 +29,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
   try {
     const file = req.file;
+    console.log('Received file:', file); // Log received file for debugging
     if (!file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -46,19 +47,27 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
       content: file.buffer.toString('base64')
     };
 
+    console.log('Sending audio:', audio); // Log audio content for debugging
+
     // Set up the speech recognition request
     const request = {
       audio: audio,
       config: audioConfig
     };
 
+    console.log('Sending request:', request); // Log speech recognition request for debugging
+
     // Perform the speech recognition
     const [response] = await speechClient.recognize(request);
+
+    console.log('Received response:', response); // Log received response for debugging
 
     // Process the transcription response
     const transcription = response.results
       .map(result => result.alternatives[0].transcript)
       .join('\n');
+
+    console.log('Transcription:', transcription); // Log transcription for debugging
 
     // Respond with the transcription
     res.status(200).json({ textContent: transcription });
