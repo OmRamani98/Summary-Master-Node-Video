@@ -63,7 +63,7 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
     const transcription = response.results
       .map(result => result.alternatives[0].transcript)
       .join('\n');
-    print(transcription);
+    console.log(transcription);
     // Respond with the transcription
     res.status(200).json({ textContent: transcription });
   } catch (error) {
