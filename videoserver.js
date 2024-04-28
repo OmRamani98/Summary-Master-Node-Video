@@ -1,140 +1,78 @@
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs');
-const ffmpeg = require('fluent-ffmpeg');
 const { Storage } = require('@google-cloud/storage');
 const { SpeechClient } = require('@google-cloud/speech').v1;
+const fs = require('fs');
+const path = require('path');
 const cors = require('cors');
 
-const storage = new Storage({
+const app = express();
+const port = process.env.PORT || 8001;
+
+// Initialize Google Cloud Storage client
+const storageClient = new Storage({
   projectId: "summary-master-sdp",
   credentials: JSON.parse(process.env.CLOUD_STORAGE_KEYFILE)
 });
 const bucketName = 'summary-master'; // Replace with your bucket name
 
-const app = express();
-const port = process.env.PORT || 8001;
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Configure CORS to allow requests from specified origins
-app.use(cors({
-  origin: ['https://662e4f7d1ac312c75d2252db--leafy-basbousa-e47405.netlify.app', 'http://localhost:3000'],
-  methods: ['POST'], // Add the allowed HTTP methods if needed
-}));
-
-const multerStorage = multer.memoryStorage();
-const upload = multer({
-  storage: multerStorage
+// Initialize Google Cloud Speech-to-Text client
+const speechClient = new SpeechClient({
+  projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
+  credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
 });
 
-const uploadFileToGCS = async (file) => {
-  const bucket = storage.bucket(bucketName);
-  const fileName = `${Date.now()}-${file.originalname}`;
+// Set up CORS middleware
+app.use(cors());
 
-  const fileUpload = bucket.file(fileName);
+// Configure multer for file upload
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
-  const fileStream = fileUpload.createWriteStream({
-    metadata: {
-      contentType: file.mimetype
-    },
-    resumable: false
-  });
-
-  return new Promise((resolve, reject) => {
-    fileStream.on('error', (err) => {
-      reject(err);
-    });
-
-    fileStream.on('finish', async () => {
-      // Make the file publicly accessible
-      await fileUpload.makePublic();
-
-      const publicUrl = `https://storage.cloud.google.com/${bucket.name}/${fileUpload.name}`;
-      resolve(publicUrl);
-    });
-
-    fileStream.end(file.buffer);
-  });
-};
-
-const convertVideoToMP3 = async (inputPath, outputPath) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .toFormat('mp3')
-      .output(outputPath)
-      .on('end', () => {
-        console.log('Audio conversion completed');
-        resolve();
-      })
-      .on('error', (err) => {
-        console.error('Audio conversion error:', err);
-        reject(err);
-      })
-      .run();
-  });
-};
-
-const transcribeAudio = async (gcsUri) => {
-  const client = new SpeechClient({
-    projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
-    credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
-  });
-
-  const audio = {
-    uri: gcsUri, // Use the GCS URI directly
-  };
-
-  const config = {
-    encoding: 'MP3',
-    sampleRateHertz: 16000,
-    languageCode: 'en-US',
-    enableAutomaticPunctuation: true
-  };
-
-  const [response] = await client.recognize({ audio, config });
-  const transcription = response.results
-    .map(result => result.alternatives[0].transcript)
-    .join('\n');
-
-  console.log('Transcription:', transcription);
-  return transcription;
-};
-
+// Define route for uploading MP4 file and extracting transcript
 app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
   try {
-    const fileUrl = await uploadFileToGCS(req.file);
-    console.log('File uploaded to Google Cloud Storage:', fileUrl);
+    const file = req.file;
+    if (!file) {
+      return res.status(400).send('No file uploaded.');
+    }
 
-    const localVideoPath = `/tmp/${req.file.originalname}`;
-    const outputPath = `/tmp/output.mp3`;
+    // Upload the MP4 file to Google Cloud Storage
+    const fileName = `${Date.now()}-${file.originalname}`;
+    const fileUpload = storageClient.bucket(bucketName).file(fileName);
+    await fileUpload.save(file.buffer);
 
-    // Write the file to the local disk
-    fs.writeFileSync(localVideoPath, req.file.buffer);
+    console.log('File uploaded to Google Cloud Storage:', fileName);
 
-    // Convert video to MP3 format
-    await convertVideoToMP3(localVideoPath, outputPath);
-    console.log('Audio file created:', outputPath);
+    // Transcribe the audio from the MP4 file using LongRunningRecognize method
+    const audioConfig = {
+        sampleRateHertz: 16000,
+        languageCode: 'en-US',
+        encoding: 'MP3',
+        enableAutomaticPunctuation: true
+      };
 
-    // Upload the output audio file to Google Cloud Storage
-    const audioUrl = await uploadFileToGCS({ originalname: 'output.mp3', buffer: fs.readFileSync(outputPath) });
+    const audio = {
+      uri: `gs://${bucketName}/${fileName}`,
+    };
 
-    // Transcribe audio to text
-    const transcription = await transcribeAudio(audioUrl);
+    const [operation] = await speechClient.longRunningRecognize({ audio, config: audioConfig });
+    const [response] = await operation.promise();
 
-    // Delete the local video and audio files
-    fs.unlinkSync(localVideoPath);
-    fs.unlinkSync(outputPath);
-
-    // Send transcription in response
-    res.json({ textContent: transcription });
+    const transcriptions = response.results.map(result => result.alternatives[0].transcript).join('\n');
+    
+    res.json({ textContent: transcriptions });
+    
+    // Delete the temporary uploaded file from Google Cloud Storage
+    await fileUpload.delete();
+    console.log('Temporary file deleted from Google Cloud Storage:', fileName);
   } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ error: 'Failed to process the video file' });
+    console.error('Error processing file:', error);
+    res.status(500).json({ error: 'Failed to process file.' });
   }
 });
 
+// Start the server
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
