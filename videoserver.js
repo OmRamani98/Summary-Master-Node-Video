@@ -4,6 +4,7 @@ const cors = require('cors');
 const { Storage } = require('@google-cloud/storage');
 const { SpeechClient } = require('@google-cloud/speech').v1;
 const path = require('path');
+const fs = require('fs'); // Import the fs module
 const ffmpeg = require('fluent-ffmpeg');
 
 const app = express();
