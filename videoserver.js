@@ -109,8 +109,11 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
     await convertVideoToMP3(localVideoPath, outputPath);
     console.log('Audio file created:', outputPath);
 
+    // Upload the output audio file to Google Cloud Storage
+    const audioUrl = await uploadFileToGCS({ originalname: 'output.mp3', buffer: fs.readFileSync(outputPath) });
+
     // Transcribe audio to text
-    const transcription = await transcribeAudio(outputPath);
+    const transcription = await transcribeAudio(audioUrl);
 
     // Delete the local video and audio files
     fs.unlinkSync(localVideoPath);
