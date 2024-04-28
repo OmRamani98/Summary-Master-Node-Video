@@ -68,14 +68,14 @@ const convertVideoToMP3 = async (inputPath, outputPath) => {
   });
 };
 
-const transcribeAudio = async (audioUri) => {
+const transcribeAudio = async (gcsUri) => {
   const client = new SpeechClient({
     projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
     credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
   });
 
   const audio = {
-    uri: audioUri,
+    uri: gcsUri, // Use the GCS URI directly
   };
 
   const config = {
