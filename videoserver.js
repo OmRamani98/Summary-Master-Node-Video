@@ -45,13 +45,18 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
     console.log('File uploaded to Google Cloud Storage:', fileName);
 
     // Transcribe the audio from the MP4 file using LongRunningRecognize method
+// const audioConfig = {
+//     sampleRateHertz: 16000,
+//     languageCode: 'en-US',
+//     encoding: 'MP3', // This line specifies the encoding as MP3
+//     enableAutomaticPunctuation: true
+// };
 const audioConfig = {
     sampleRateHertz: 16000,
     languageCode: 'en-US',
-    encoding: 'MP3', // This line specifies the encoding as MP3
+    encoding: 'LINEAR16', // Change encoding to LINEAR16
     enableAutomaticPunctuation: true
 };
-
 
     const audio = {
       uri: `gs://${bucketName}/${fileName}`,
