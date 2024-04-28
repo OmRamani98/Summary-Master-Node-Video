@@ -3,12 +3,14 @@ const multer = require('multer');
 const cors = require('cors');
 const { Storage } = require('@google-cloud/storage');
 const { SpeechClient } = require('@google-cloud/speech').v1;
+const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
 
 const app = express();
 app.use(cors());
-const port = process.env.PORT || 8000;
+const port = process.env.PORT || 8001;
 
-// Set up Google Cloud Storage using service account key from environment variable
+// Set up Google Cloud Storage using service account key
 const storage = new Storage({
   projectId: "summary-master-sdp",
   credentials: JSON.parse(process.env.CLOUD_STORAGE_KEYFILE)
@@ -25,50 +27,81 @@ const speechClient = new SpeechClient({
 // Configure multer for handling file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Define endpoint for uploading MP4 files
+// Function to upload file to GCS
+const uploadFileToGCS = async (fileBuffer, fileName) => {
+  const file = bucket.file(fileName);
+  await file.save(fileBuffer);
+  console.log(`File ${fileName} uploaded to GCS.`);
+  return `gs://${bucketName}/${fileName}`;
+};
+
+// Function to convert video to audio with MP3 encoding
+const convertVideoToAudio = (videoBuffer, outputPath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoBuffer)
+      .toFormat('mp3')
+      .on('end', () => {
+        console.log('Audio conversion completed');
+        resolve();
+      })
+      .on('error', (err) => {
+        console.error('Audio conversion error:', err);
+        reject(err);
+      })
+      .save(outputPath);
+  });
+};
+
+// POST endpoint for handling video file upload and text extraction
 app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
   try {
-    const file = req.file;
-    if (!file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+    const videoBuffer = req.file.buffer;
+    const outputPath = 'output.mp3'; // Output audio file path
 
-    // Upload the file to Google Cloud Storage
-    const fileName = `${Date.now()}_${file.originalname}`;
-    const gcsFilePath = `gs://${bucketName}/${fileName}`;
-    const gcsFile = bucket.file(fileName);
-    await gcsFile.save(file.buffer);
+    console.log('Video uploaded');
 
-    // Configure audio settings for speech recognition
-    const audioConfig = {
-      encoding: 'LINEAR16',
-      sampleRateHertz: 16000, // Adjust as needed
-      languageCode: 'en-US', // Language code
-      enableAutomaticPunctuation: true // Enable automatic punctuation
+    // Convert video to audio with MP3 encoding
+    await convertVideoToAudio(videoBuffer, outputPath);
+
+    console.log('Audio file created');
+
+    // Upload audio file to GCS
+    const gcsAudioPath = await uploadFileToGCS(fs.readFileSync(outputPath), outputPath);
+
+    // Create a Speech-to-Text client
+    const client = new SpeechClient();
+
+    // Define recognition config
+    const config = {
+      sampleRateHertz: 16000,
+      languageCode: 'en-US',
+      encoding: 'MP3',
+      enableAutomaticPunctuation: true
     };
 
-    // Set up the speech recognition request
-    const request = {
-      audio: { uri: gcsFilePath },
-      config: audioConfig
-    };
+    // Perform speech recognition
+    const [response] = await client.recognize({
+      audio: { uri: gcsAudioPath },
+      config: config
+    });
 
-    // Perform the speech recognition asynchronously (LongRunningRecognize)
-    const [operation] = await speechClient.longRunningRecognize(request);
-
-    // Wait for the operation to complete
-    const [response] = await operation.promise();
-
-    // Process the transcription response
     const transcription = response.results
       .map(result => result.alternatives[0].transcript)
       .join('\n');
 
-    // Respond with the transcription
-    res.status(200).json({ textContent: transcription });
+    console.log('Transcription:', transcription);
+
+    res.json({ textContent: transcription });
   } catch (error) {
-    console.error('Error processing video:', error);
-    res.status(500).json({ error: 'Failed to process video' });
+    console.error('Error extracting text:', error);
+    res.status(500).json({ error: 'Failed to extract text' });
+  } finally {
+    // Clean up temporary files
+    if (fs.existsSync(outputPath)) {
+      fs.unlinkSync(outputPath);
+      console.log('Temporary audio file deleted');
+    }
   }
 });
 
