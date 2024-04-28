@@ -17,11 +17,12 @@ const port = process.env.PORT || 8001;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Configure CORS to allow requests from specified origins
 app.use(cors({
   origin: ['https://662e4f7d1ac312c75d2252db--leafy-basbousa-e47405.netlify.app', 'http://localhost:3000'],
   methods: ['POST'], // Add the allowed HTTP methods if needed
 }));
-
 
 const multerStorage = multer.memoryStorage();
 const upload = multer({
@@ -50,7 +51,7 @@ const uploadFileToGCS = async (file) => {
       // Make the file publicly accessible
       await fileUpload.makePublic();
 
-      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileUpload.name}`;
+      const publicUrl = `https://storage.cloud.google.com/${bucket.name}/${fileUpload.name}`;
       resolve(publicUrl);
     });
 
