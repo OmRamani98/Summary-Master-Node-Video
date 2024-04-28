@@ -1,9 +1,9 @@
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
-const { SpeechClient } = require('@google-cloud/speech').v1;
 const ffmpeg = require('fluent-ffmpeg');
 const { Storage } = require('@google-cloud/storage');
+const { SpeechClient } = require('@google-cloud/speech').v1;
 const cors = require('cors');
 
 const storage = new Storage({
@@ -51,19 +51,47 @@ const uploadFileToGCS = async (file) => {
   });
 };
 
-const splitAudioIntoSegments = async (filePath) => {
-  const audioSegments = [];
+const convertVideoToMP3 = async (inputPath, outputPath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .toFormat('mp3')
+      .output(outputPath)
+      .on('end', () => {
+        console.log('Audio conversion completed');
+        resolve();
+      })
+      .on('error', (err) => {
+        console.error('Audio conversion error:', err);
+        reject(err);
+      })
+      .run();
+  });
+};
 
-  const audioData = fs.readFileSync(filePath);
-  const audioLength = audioData.length;
-  const segmentSize = 16000 * 2;
+const transcribeAudio = async (audioUri) => {
+  const client = new SpeechClient({
+    projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
+    credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
+  });
 
-  for (let i = 0; i < audioLength; i += segmentSize) {
-    const segment = audioData.slice(i, i + segmentSize);
-    audioSegments.push(segment);
-  }
+  const audio = {
+    uri: audioUri,
+  };
 
-  return audioSegments;
+  const config = {
+    encoding: 'MP3',
+    sampleRateHertz: 16000,
+    languageCode: 'en-US',
+    enableAutomaticPunctuation: true
+  };
+
+  const [response] = await client.recognize({ audio, config });
+  const transcription = response.results
+    .map(result => result.alternatives[0].transcript)
+    .join('\n');
+
+  console.log('Transcription:', transcription);
+  return transcription;
 };
 
 app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
@@ -71,48 +99,24 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
     const fileUrl = await uploadFileToGCS(req.file);
     console.log('File uploaded to Google Cloud Storage:', fileUrl);
 
-    const outputPath = `gs://${bucketName}/output.mp3`;
+    const localVideoPath = `/tmp/${req.file.originalname}`;
+    const outputPath = `/tmp/output.mp3`;
 
-    await new Promise((resolve, reject) => {
-      ffmpeg(req.file.buffer)
-        .toFormat('mp3')
-        .output(outputPath)
-        .on('end', () => {
-          console.log('Audio conversion completed');
-          resolve();
-        })
-        .on('error', (err) => {
-          console.error('Audio conversion error:', err);
-          reject(err);
-        })
-        .run();
-    });
+    // Write the file to the local disk
+    fs.writeFileSync(localVideoPath, req.file.buffer);
 
+    // Convert video to MP3 format
+    await convertVideoToMP3(localVideoPath, outputPath);
     console.log('Audio file created:', outputPath);
 
-    const client = new SpeechClient(
-      {
-        projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
-        credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
-      }
-    );
+    // Transcribe audio to text
+    const transcription = await transcribeAudio(outputPath);
 
-    const [response] = await client.recognize({
-      audio: { uri: outputPath },
-      config: {
-        encoding: 'MP3',
-        sampleRateHertz: 16000,
-        languageCode: 'en-US',
-        enableAutomaticPunctuation: true
-      }
-    });
+    // Delete the local video and audio files
+    fs.unlinkSync(localVideoPath);
+    fs.unlinkSync(outputPath);
 
-    const transcription = response.results
-      .map(result => result.alternatives[0].transcript)
-      .join('\n');
-
-    console.log('Transcription:', transcription);
-
+    // Send transcription in response
     res.json({ textContent: transcription });
   } catch (error) {
     console.error('Error:', error);
