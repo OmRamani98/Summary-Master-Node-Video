@@ -25,8 +25,8 @@ const speechClient = new SpeechClient({
 // Configure multer for handling file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Define endpoint for uploading MP4 files
-app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
+// Define endpoint for uploading audio files
+app.post('/upload-audio', upload.single('audioFile'), async (req, res) => {
   try {
     const file = req.file;
     if (!file) {
@@ -52,8 +52,11 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
       config: audioConfig
     };
 
-    // Perform the speech recognition
-    const [response] = await speechClient.recognize(request);
+    // Perform the speech recognition asynchronously (LongRunningRecognize)
+    const [operation] = await speechClient.longRunningRecognize(request);
+
+    // Wait for the operation to complete
+    const [response] = await operation.promise();
 
     // Process the transcription response
     const transcription = response.results
@@ -63,8 +66,8 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
     // Respond with the transcription
     res.status(200).json({ textContent: transcription });
   } catch (error) {
-    console.error('Error processing video:', error);
-    res.status(500).json({ error: 'Failed to process video' });
+    console.error('Error processing audio:', error);
+    res.status(500).json({ error: 'Failed to process audio' });
   }
 });
 
