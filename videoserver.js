@@ -25,13 +25,19 @@ const speechClient = new SpeechClient({
 // Configure multer for handling file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Define endpoint for uploading audio files
-app.post('/upload-audio', upload.single('audioFile'), async (req, res) => {
+// Define endpoint for uploading MP4 files
+app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
   try {
     const file = req.file;
     if (!file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
+
+    // Upload the file to Google Cloud Storage
+    const fileName = `${Date.now()}_${file.originalname}`;
+    const gcsFilePath = `gs://${bucketName}/${fileName}`;
+    const gcsFile = bucket.file(fileName);
+    await gcsFile.save(file.buffer);
 
     // Configure audio settings for speech recognition
     const audioConfig = {
@@ -41,14 +47,9 @@ app.post('/upload-audio', upload.single('audioFile'), async (req, res) => {
       enableAutomaticPunctuation: true // Enable automatic punctuation
     };
 
-    // Configure the audio source
-    const audio = {
-      content: file.buffer.toString('base64')
-    };
-
     // Set up the speech recognition request
     const request = {
-      audio: audio,
+      audio: { uri: gcsFilePath },
       config: audioConfig
     };
 
@@ -66,8 +67,8 @@ app.post('/upload-audio', upload.single('audioFile'), async (req, res) => {
     // Respond with the transcription
     res.status(200).json({ textContent: transcription });
   } catch (error) {
-    console.error('Error processing audio:', error);
-    res.status(500).json({ error: 'Failed to process audio' });
+    console.error('Error processing video:', error);
+    res.status(500).json({ error: 'Failed to process video' });
   }
 });
 
