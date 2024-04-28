@@ -54,7 +54,7 @@ app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
 const audioConfig = {
     sampleRateHertz: 16000,
     languageCode: 'en-US',
-    encoding: 'MP3', // Change encoding to LINEAR16
+    encoding: 'FLAC', // Change encoding to LINEAR16
     enableAutomaticPunctuation: true
 };
 
