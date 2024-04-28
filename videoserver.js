@@ -3,8 +3,9 @@ const multer = require('multer');
 const fs = require('fs');
 const { SpeechClient } = require('@google-cloud/speech').v1;
 const ffmpeg = require('fluent-ffmpeg');
-
 const { Storage } = require('@google-cloud/storage');
+const cors = require('cors');
+
 const storage = new Storage({
   projectId: "summary-master-sdp",
   credentials: JSON.parse(process.env.CLOUD_STORAGE_KEYFILE)
@@ -16,6 +17,7 @@ const port = process.env.PORT || 8001;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cors());
 
 const multerStorage = multer.memoryStorage();
 const upload = multer({
