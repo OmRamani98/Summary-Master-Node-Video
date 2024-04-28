@@ -17,7 +17,11 @@ const port = process.env.PORT || 8001;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+app.use(cors({
+  origin: ['https://662e4f7d1ac312c75d2252db--leafy-basbousa-e47405.netlify.app', 'http://localhost:3000'],
+  methods: ['POST'], // Add the allowed HTTP methods if needed
+}));
+
 
 const multerStorage = multer.memoryStorage();
 const upload = multer({
