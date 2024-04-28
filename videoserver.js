@@ -1,78 +1,123 @@
 const express = require('express');
 const multer = require('multer');
-const cors = require('cors');
-const { Storage } = require('@google-cloud/storage');
+const fs = require('fs');
 const { SpeechClient } = require('@google-cloud/speech').v1;
+const ffmpeg = require('fluent-ffmpeg');
 
-const app = express();
-app.use(cors());
-const port = process.env.PORT || 8000;
-
-// Set up Google Cloud Storage using service account key from environment variable
+const { Storage } = require('@google-cloud/storage');
 const storage = new Storage({
   projectId: "summary-master-sdp",
   credentials: JSON.parse(process.env.CLOUD_STORAGE_KEYFILE)
 });
-const bucketName = 'summary-master'; // Replace with your GCS bucket name
-const bucket = storage.bucket(bucketName);
+const bucketName = 'summary-master'; // Replace with your bucket name
 
-// Set up Google Cloud Speech-to-Text
-const speechClient = new SpeechClient({
-  projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
-  credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
+const app = express();
+const port = process.env.PORT || 8001;
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+const multerStorage = multer.memoryStorage();
+const upload = multer({
+  storage: multerStorage
 });
 
-// Configure multer for handling file uploads
-const upload = multer({ storage: multer.memoryStorage() });
+const uploadFileToGCS = async (file) => {
+  const bucket = storage.bucket(bucketName);
+  const fileName = `${Date.now()}-${file.originalname}`;
 
-// Define endpoint for uploading MP4 files
+  const fileUpload = bucket.file(fileName);
+
+  const fileStream = fileUpload.createWriteStream({
+    metadata: {
+      contentType: file.mimetype
+    },
+    resumable: false
+  });
+
+  return new Promise((resolve, reject) => {
+    fileStream.on('error', (err) => {
+      reject(err);
+    });
+
+    fileStream.on('finish', () => {
+      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileUpload.name}`;
+      resolve(publicUrl);
+    });
+
+    fileStream.end(file.buffer);
+  });
+};
+
+const splitAudioIntoSegments = async (filePath) => {
+  const audioSegments = [];
+
+  const audioData = fs.readFileSync(filePath);
+  const audioLength = audioData.length;
+  const segmentSize = 16000 * 2;
+
+  for (let i = 0; i < audioLength; i += segmentSize) {
+    const segment = audioData.slice(i, i + segmentSize);
+    audioSegments.push(segment);
+  }
+
+  return audioSegments;
+};
+
 app.post('/upload-video', upload.single('videoFile'), async (req, res) => {
   try {
-    const file = req.file;
-    if (!file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+    const fileUrl = await uploadFileToGCS(req.file);
+    console.log('File uploaded to Google Cloud Storage:', fileUrl);
 
-    // Upload the file to Google Cloud Storage
-    const fileName = `${Date.now()}_${file.originalname}`;
-    const gcsFilePath = `gs://${bucketName}/${fileName}`;
-    const gcsFile = bucket.file(fileName);
-    await gcsFile.save(file.buffer);
+    const outputPath = `gs://${bucketName}/output.mp3`;
 
-    // Configure audio settings for speech recognition
-    const audioConfig = {
-      encoding: 'LINEAR16',
-      sampleRateHertz: 16000, // Adjust as needed
-      languageCode: 'en-US', // Language code
-      enableAutomaticPunctuation: true // Enable automatic punctuation
-    };
+    await new Promise((resolve, reject) => {
+      ffmpeg(req.file.buffer)
+        .toFormat('mp3')
+        .output(outputPath)
+        .on('end', () => {
+          console.log('Audio conversion completed');
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('Audio conversion error:', err);
+          reject(err);
+        })
+        .run();
+    });
 
-    // Set up the speech recognition request
-    const request = {
-      audio: { uri: gcsFilePath },
-      config: audioConfig
-    };
+    console.log('Audio file created:', outputPath);
 
-    // Perform the speech recognition asynchronously (LongRunningRecognize)
-    const [operation] = await speechClient.longRunningRecognize(request);
+    const client = new SpeechClient(
+      {
+        projectId: "summary-master-sdp", // Replace with your Google Cloud project ID
+        credentials: JSON.parse(process.env.SPEECH_TO_TEXT_KEYFILE)
+      }
+    );
 
-    // Wait for the operation to complete
-    const [response] = await operation.promise();
+    const [response] = await client.recognize({
+      audio: { uri: outputPath },
+      config: {
+        encoding: 'MP3',
+        sampleRateHertz: 16000,
+        languageCode: 'en-US',
+        enableAutomaticPunctuation: true
+      }
+    });
 
-    // Process the transcription response
     const transcription = response.results
       .map(result => result.alternatives[0].transcript)
       .join('\n');
-    console.log(transcription);
-    // Respond with the transcription
-    res.status(200).json({ textContent: transcription });
+
+    console.log('Transcription:', transcription);
+
+    res.json({ textContent: transcription });
   } catch (error) {
-    console.error('Error processing video:', error);
-    res.status(500).json({ error: 'Failed to process video' });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to process the video file' });
   }
 });
 
-// Start the server
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(`Server listening on port ${port}`);
 });
