@@ -59,9 +59,8 @@ const audioConfig = {
 };
 
     const audio = {
-      content: file.buffer.toString('base64')
-      //uri: `gs://${bucketName}/${fileName}`,
-    };
+  uri: `gs://${bucketName}/${fileName}`, 
+};
 
     const [operation] = await speechClient.longRunningRecognize({ audio, config: audioConfig });
     const [response] = await operation.promise();
